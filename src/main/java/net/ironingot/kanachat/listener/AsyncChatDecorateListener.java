@@ -1,40 +1,34 @@
 package net.ironingot.kanachat.listener;
 
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-import org.bukkit.ChatColor;
-import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.EventPriority;
-import org.bukkit.event.Listener;
-import org.bukkit.event.player.AsyncPlayerChatEvent;
-import io.papermc.paper.event.player.AsyncChatDecorateEvent;
-
 import biscotte.kana.Kana;
+import io.papermc.paper.event.player.AsyncChatDecorateEvent;
 import net.ironingot.kanachat.KanaChat;
 import net.ironingot.translator.KanaKanjiTranslator;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.TextComponent;
 import net.kyori.adventure.text.format.NamedTextColor;
+import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
 
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+@SuppressWarnings("UnstableApiUsage")
 public class AsyncChatDecorateListener implements Listener {
-    public final KanaChat plugin;
-
-    private static final String excludeMatchString = "\u00a7|u00a74u00a75u00a73u00a74v|^http|^\\.\\/";
+    private static final String excludeMatchString = "\u00a7|u00a74u00a75u00a73u00a74v|^http|^\\./";
     private static final Pattern excludePattern = Pattern.compile(excludeMatchString);
-
-    private static final String systemMatchString = "^(#GLOBAL#|>)([ ]*)(.*)";
+    private static final String systemMatchString = "^(#GLOBAL#|>)( *)(.*)";
     private static final Pattern systemPattern = Pattern.compile(systemMatchString);
-
     private static final String wordMatchString = "([a-z0-9!-/:-@\\[-`\\{-~]*)";
     private static final Pattern wordPattern = Pattern.compile(wordMatchString);
-
     private static final String prefixMatchString = "^([0-9!-/:-@\\[-`\\{-~]+)(.*?)";
     private static final Pattern prefixPattern = Pattern.compile(prefixMatchString);
-
     private static final String postfixMatchString = "(.*?)([0-9!-,.-/:-@\\[-`\\{-~]+)$";
     private static final Pattern postfixPattern = Pattern.compile(postfixMatchString);
+    public final KanaChat plugin;
 
     public AsyncChatDecorateListener(KanaChat plugin) {
         this.plugin = plugin;
@@ -46,19 +40,11 @@ public class AsyncChatDecorateListener implements Listener {
         String space = "";
         Component component = event.originalMessage();
 
-        if (!(component instanceof TextComponent)) {
-            return;
-        }
-
-        TextComponent textComponent = (TextComponent)component;
-        if (textComponent == null) {
+        if (!(component instanceof TextComponent textComponent)) {
             return;
         }
 
         String message = textComponent.content();
-        if (message == null) {
-            return;
-        }
 
         if (message.startsWith("/")) {
             return;
@@ -76,10 +62,14 @@ public class AsyncChatDecorateListener implements Listener {
         }
 
         Player player = event.player();
-        Boolean toKana = plugin.getConfigHandler().getUserMode(player.getName());
-        Boolean toKanji = plugin.getConfigHandler().getUserKanjiConversion(player.getName());
+        if (player == null) {
+            return;
+        }
 
-        if (toKana.equals(Boolean.FALSE)) {
+        boolean toKana = plugin.getConfiguration().isKanaEnabled(player.getName());
+        boolean toKanji = plugin.getConfiguration().isKanjiEnabled(player.getName());
+
+        if (!toKana) {
             return;
         }
 
@@ -97,26 +87,24 @@ public class AsyncChatDecorateListener implements Listener {
 
         // [Prefix] <Converted Message> <Source Message>
         if (!prefix.isEmpty()) {
-            component
-                .append(Component.text(prefix))
-                .append(Component.text(" "));
+            component = component
+                    .append(Component.text(prefix))
+                    .append(Component.text(" "));
         }
 
         return component
-            .append(Component.text(dst))
-            .append(Component.text(" " + ChatColor.DARK_GRAY))
-            .append(Component.text("("))
-            .append(Component.text(src))
-            .append(Component.text(")"));
+                .append(Component.text(dst))
+                .append(Component.text(" ").color(NamedTextColor.DARK_GRAY))
+                .append(Component.text(src).color(NamedTextColor.DARK_GRAY));
 
     }
 
-    public String translateJapanese(String message, Boolean toKanji)
-    {
+    public String translateJapanese(String message, Boolean toKanji) {
         StringBuilder stringBuilder = new StringBuilder();
         boolean isLastTranslated = true;
+        Map<String, String> dictionary = plugin.getDictionary().getValues();
 
-        for (String word: message.split(" ")) {
+        for (String word : message.split(" ")) {
             Matcher excludeMatcher = excludePattern.matcher(word);
             if (excludeMatcher.find()) {
                 stringBuilder.append(word);
@@ -126,7 +114,7 @@ public class AsyncChatDecorateListener implements Listener {
             Matcher wordMatcher = wordPattern.matcher(word);
             if (!wordMatcher.matches()) {
                 // with blank
-                if (stringBuilder.length() > 0) {
+                if (!stringBuilder.isEmpty()) {
                     stringBuilder.append(" ");
                 }
                 stringBuilder.append(word);
@@ -141,7 +129,7 @@ public class AsyncChatDecorateListener implements Listener {
                 prefix = prefixMatcher.group(1);
                 word = prefixMatcher.group(2);
             }
-        
+
             // find postfix signs
             Matcher postfixMatcher = postfixPattern.matcher(word);
             String postfix = "";
@@ -149,7 +137,17 @@ public class AsyncChatDecorateListener implements Listener {
                 word = postfixMatcher.group(1);
                 postfix = postfixMatcher.group(2);
             }
-        
+
+            String dictionaryValue = dictionary.get(word.toLowerCase());
+            if (dictionaryValue != null) {
+                if (!isLastTranslated) {
+                    stringBuilder.append(" ");
+                }
+                stringBuilder.append(prefix).append(dictionaryValue).append(postfix);
+                isLastTranslated = true;
+                continue;
+            }
+
             // Roma-Ji -> Hiragana translation
             Kana kana = new Kana();
             kana.setLine(word);
@@ -157,24 +155,24 @@ public class AsyncChatDecorateListener implements Listener {
             String translatedWord = kana.getLine();
 
             // Hiragana -> Kanji translation
-            if (toKanji.equals(Boolean.TRUE)) {
+            if (toKanji) {
                 int wordLength = word.length();
-                int headLength = wordLength < 2 ? wordLength : 2;
-                int footLength = wordLength < 2 ? wordLength : 2;
+                int headLength = Math.min(wordLength, 2);
+                int footLength = Math.min(wordLength, 2);
 
                 if (translatedWord.startsWith(word.substring(0, headLength)) ||
-                    translatedWord.endsWith(word.substring(wordLength - footLength, wordLength))) {
-                    // its not roma-ji may be.
+                        translatedWord.endsWith(word.substring(wordLength - footLength, wordLength))) {
+                    // it's not roma-ji may be.
                     translatedWord = word;
-                    
+
                     // with blank
-                    if (stringBuilder.length() > 0) {
+                    if (!stringBuilder.isEmpty()) {
                         stringBuilder.append(" ");
                     }
                     isLastTranslated = false;
                 } else {
                     translatedWord = KanaKanjiTranslator.translate(translatedWord);
-                    // without blank in japanese string
+                    // without blank in Japanese string
 
                     if (!isLastTranslated) {
                         stringBuilder.append(" ");
@@ -183,9 +181,10 @@ public class AsyncChatDecorateListener implements Listener {
                 }
             }
 
-            stringBuilder.append(prefix + translatedWord + postfix);
+            stringBuilder.append(prefix).append(translatedWord).append(postfix);
         }
 
         return stringBuilder.toString();
     }
+
 }
